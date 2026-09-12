@@ -2,10 +2,154 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="refresh" content="0; url=./app.html" />
-  <title>Studio Cut</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Studio Cut — Local AI Background Remover</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <p>Open <a href="./app.html">Studio Cut</a>.</p>
+<div class="app">
+    <header>
+      <div class="logo">
+        <div class="mark">✂</div>
+        <div>Studio Cut<div class="sub">RMBG ONNX + optional refine · image / GIF / video</div></div>
+      </div>
+      <div class="status-pill"><span class="dot" id="dot"></span><span id="status">Loading models…</span></div>
+    </header>
+
+    <aside class="left">
+      <h2>Source</h2>
+      <div class="drop" id="drop">
+        <div class="drop-title">Drop image, GIF, or video</div>
+        <div class="drop-sub">PNG · JPG · WEBP · GIF · MP4 · WEBM</div>
+        <button type="button" id="browseBtn">Choose file</button>
+      </div>
+      <input id="file" type="file" accept="image/*,video/*,.gif,.webp,.mp4,.webm,.mov" />
+      <div class="row" style="margin-top:8px">
+        <button class="ghost" id="sampleBtn">Sample</button>
+        <button class="ghost" id="clearBtn">Clear</button>
+      </div>
+
+      <h2>AI</h2>
+      <label class="field"><span>Engine</span></label>
+      <select id="engine">
+        <option value="rmbg">RMBG-1.4 ONNX (recommended)</option>
+        <option value="modnet">MODNet ONNX (portraits, web-safe)</option>
+        <option value="both-max">RMBG + MODNet union</option>
+        <option value="both-min">RMBG + MODNet intersect</option>
+      </select>
+      <label class="field"><span>Device</span></label>
+      <select id="device">
+        <option value="auto">Auto (WebGPU → WASM)</option>
+        <option value="webgpu">WebGPU</option>
+        <option value="wasm">WASM / CPU (most compatible)</option>
+      </select>
+      <label class="field"><span>Threshold</span><span id="thrVal">0.50</span></label>
+      <input id="thr" type="range" min="0" max="100" value="50" />
+      <label class="field"><span>Feather px</span><span id="featherVal">1</span></label>
+      <input id="feather" type="range" min="0" max="12" value="1" />
+      <label class="field"><span>Edge shift</span><span id="shiftVal">0</span></label>
+      <input id="shift" type="range" min="-8" max="8" value="0" />
+      <div class="row" style="margin-top:8px">
+        <button class="primary" id="runBtn" disabled>Remove background</button>
+        <button id="refineBtn" disabled>Refine pass</button>
+      </div>
+      <div class="hint">U²-Net is not used — its MaxPool ceil mode crashes ONNX Runtime Web. RMBG / MODNet are the web-safe ONNX models.</div>
+
+      <h2>Video / GIF capture</h2>
+      <label class="field"><span>Max long edge</span><span id="maxSideVal">640</span></label>
+      <input id="maxSide" type="range" min="256" max="1024" step="64" value="640" />
+      <label class="field"><span>Sample FPS</span><span id="sampleFpsVal">8</span></label>
+      <input id="sampleFps" type="range" min="2" max="24" value="8" />
+      <label class="field"><span>Max frames</span></label>
+      <input id="maxFrames" type="number" min="8" max="300" value="80" />
+    </aside>
+
+    <section class="stage-wrap">
+      <div class="toolbar">
+        <button data-tool="erase" class="active">Eraser</button>
+        <button data-tool="keep">Keep</button>
+        <button data-tool="hide">Paint out</button>
+        <span class="sep"></span>
+        <label class="field" style="margin:0;width:auto;gap:8px">Brush <span id="brushVal">28</span></label>
+        <input id="brush" type="range" min="4" max="120" value="28" style="width:110px" />
+        <label class="field" style="margin:0;width:auto">Soft</label>
+        <input id="soft" type="range" min="0" max="100" value="55" style="width:80px" />
+        <button id="undoBtn">Undo</button>
+        <button id="resetMaskBtn">Reset</button>
+        <button id="invertBtn">Invert</button>
+      </div>
+      <div class="stage" id="stage">
+        <canvas id="view" width="800" height="480"></canvas>
+        <div class="progress" id="progress">
+          <div id="progressLabel">Working…</div>
+          <div class="bar"><i id="bar"></i></div>
+        </div>
+      </div>
+      <div class="transport">
+        <button id="playBtn" disabled>Play</button>
+        <button id="prevFrame" disabled>◀</button>
+        <button id="nextFrame" disabled>▶</button>
+        <input class="scrub" id="scrub" type="range" min="0" max="0" value="0" disabled />
+        <span id="frameLabel">0 / 0</span>
+        <label class="field" style="margin:0;width:auto;gap:8px">Playback FPS <span id="playFpsVal">12</span></label>
+        <input id="playFps" type="range" min="1" max="30" value="12" style="width:100px" />
+        <label style="color:var(--muted);font-size:11px"><input type="checkbox" id="loopPlay" checked /> loop</label>
+      </div>
+      <div class="filmstrip" id="filmstrip"></div>
+    </section>
+
+    <aside class="right">
+      <h2>Preview</h2>
+      <label class="field"><span>Backdrop</span></label>
+      <select id="backdrop">
+        <option value="check">Checkerboard</option>
+        <option value="black">Black</option>
+        <option value="white">White</option>
+        <option value="green">Green screen</option>
+        <option value="color">Custom color</option>
+        <option value="blur">Blurred original</option>
+        <option value="image">Uploaded image</option>
+      </select>
+      <input id="bgColor" type="color" value="#111827" />
+      <input id="bgImage" type="file" accept="image/*" />
+      <div class="swatches">
+        <div class="swatch" style="background:#111827" data-c="#111827"></div>
+        <div class="swatch" style="background:#ffffff" data-c="#ffffff"></div>
+        <div class="swatch" style="background:#00ff00" data-c="#00ff00"></div>
+        <div class="swatch" style="background:#38bdf8" data-c="#38bdf8"></div>
+        <div class="swatch" style="background:#f472b6" data-c="#f472b6"></div>
+      </div>
+
+      <h2>Export</h2>
+      <div class="row">
+        <button class="primary" id="dlPng" disabled>PNG</button>
+        <button id="dlGif" disabled>GIF</button>
+        <button id="dlVid" disabled>WebM</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button id="dlZip" disabled>PNG frames ZIP</button>
+      </div>
+      <label class="field"><span>GIF / video background</span></label>
+      <select id="exportBg">
+        <option value="transparent">Transparent (PNG / GIF chroma)</option>
+        <option value="color">Solid color</option>
+      </select>
+
+      <h2>Info</h2>
+      <div class="kv"><span>Type</span><span id="infoType">—</span></div>
+      <div class="kv"><span>Size</span><span id="infoSize">—</span></div>
+      <div class="kv"><span>Frames</span><span id="infoFrames">—</span></div>
+      <div class="kv"><span>Engine</span><span id="infoEngine">—</span></div>
+      <p class="footer-note">Runs in your browser. First visit downloads ONNX weights and caches them.</p>
+    </aside>
+  </div>
+
+  <video id="srcVid" muted playsinline></video>
+
+  <script src="https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>
